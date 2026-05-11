@@ -154,6 +154,7 @@ function getStationsForRegion(regionInfo) {
       Object.keys(data).forEach(stationId => {
         const station = data[stationId];
         station.name = stationId;
+        station.displayName = stationId; // will be updated with friendly name later
         station.region = region;
       });
       data = xformObject(
@@ -330,7 +331,7 @@ function selectStation(stationInfo) {
     return;
   }
   selectedStationName = stationInfo.name;
-  $('#si-name').text(stationInfo.name);
+  $('#si-name').text(stationInfo.displayName || stationInfo.name);
   const region = stationInfo.region;
   const euc = encodeURIComponent;
   const syncUrl = new URL(`/synctable/feeder.html?${euc(region)}&${euc(stationInfo.name)}`, 'https://mlat.adsb.lol/').toString();
@@ -380,7 +381,7 @@ function selectStation(stationInfo) {
 
   drawLinesToPeers(stationInfo);
   map.panInside(stationInfo.marker.getLatLng(), { padding: [300, 300] });
-  stationInfo.marker.bindPopup(escape(stationInfo.name)).openPopup();
+  stationInfo.marker.bindPopup(escape(stationInfo.displayName || stationInfo.name)).openPopup();
 }
 
 
@@ -397,7 +398,7 @@ function addStationsToMap(map, stationInfos) {
         {
           color: regionMarkerColor(s.region),
           radius: 8
-        }).addTo(map).bindTooltip(s.name);
+        }).addTo(map).bindTooltip(s.displayName || s.name);
       s.marker = marker;
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
@@ -405,6 +406,42 @@ function addStationsToMap(map, stationInfos) {
       });
       marker.on('mouseover', () => drawLinesToPeers(s, true));
       marker.on('mouseout', () => drawLinesToPeers(null, true));
+    }
+  });
+}
+
+// Loads feeder display names from the BharatRadar API and assigns
+// friendly names (callsign/name) to registered feeders, or
+// "unregistered-N" to unknown ones.
+
+async function loadFeederDisplayNames() {
+  var nameMap = {};
+  try {
+    const resp = await fetch('/syncmap/api/feeders/display-names');
+    if (resp.ok) {
+      nameMap = await resp.json();
+    }
+  } catch(e) {
+    console.warn('Feeder names API unavailable, using UUIDs as display names');
+  }
+
+  var unregCount = 0;
+  Object.keys(allStationInfos).forEach(function(k) {
+    var s = allStationInfos[k];
+    var uuid = s.name;
+    if (nameMap[uuid]) {
+      s.displayName = nameMap[uuid];
+    } else {
+      unregCount++;
+      s.displayName = 'unregistered-' + unregCount;
+    }
+  });
+
+  // Update tooltips on markers with new display names
+  Object.keys(allStationInfos).forEach(function(k) {
+    var s = allStationInfos[k];
+    if (s.marker) {
+      s.marker.unbindTooltip().bindTooltip(s.displayName);
     }
   });
 }
@@ -423,6 +460,7 @@ async function loadAllStations(map) {
     //$('#progresslabel').text(`Loading region ${ri.region} / ${ri.name}`);
     const stations = await ri.promise;
   }
+  await loadFeederDisplayNames();
   $('#progresslabel').text(`${Object.keys(allStationInfos).length} feeders in the network.`);
   // Remove the remnants of the progressbar (but leave the label).
   pb.removeClass();
@@ -478,6 +516,7 @@ async function initialize() {
     .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
     .forEach(k => {
       const station = allStationInfos[k];
-      $('<li><a href="#">' + k + '</a></li>').attr('id', 'li-' + k).click(() => selectStation(station)).appendTo($('#stations'));
+      var displayText = station.displayName || k;
+      $('<li><a href="#">' + escape(displayText) + '</a></li>').attr('id', 'li-' + k).click(() => selectStation(station)).appendTo($('#stations'));
     });
 }
